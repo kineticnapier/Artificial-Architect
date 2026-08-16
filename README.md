@@ -31,7 +31,7 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.5.0.jar
+build/libs/artificialarchitect-0.6.0.jar
 ```
 
 ## Usage
@@ -41,14 +41,16 @@ build/libs/artificialarchitect-0.5.0.jar
 建築基準位置に立って次を実行します。
 
 ```text
-/architect dump 8
+/architect dump 32
 ```
 
-クライアント側で Windows 標準の保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
+radius は 1〜128 です。クライアント側で Windows 標準の保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
 
 サーバー側にも最新 snapshot の内部コピーが `.minecraft/artificialarchitect/world.json` として保存されます。これは `actions.json` の `snapshotId`、origin、bounds、dimension の検証に使われます。
 
-v0.5.0 では dump の hot path を軽量化しています。`BlockPos.MutableBlockPos` を再利用し、同一 `BlockState` の registry ID と property serialization をキャッシュし、巨大な Gson DOM を構築せず `JsonWriter` で直接 JSON を生成します。成功メッセージには build / write / gzip+send / total の時間と、観測した unique BlockState 数も表示されます。
+v0.6.0 では dump を chunk section 単位で走査します。完全な air section は `LevelChunkSection.hasOnlyAir()` で丸ごとスキップし、非空 section だけを直接読みます。BlockState は palette ID に変換し、section snapshot の RLE 生成は最大8 workerで並列化します。Minecraft world そのものを worker thread から読み取らないため、MODを含むワールドへの非同期 read は行いません。
+
+成功メッセージには palette 数、run 数、走査 section 数、air section skip 数、worker 数、scan / RLE+JSON / write / gzip+send / total の時間が表示されます。
 
 ### 2. AI に渡す
 
@@ -70,11 +72,11 @@ v0.5.0 では dump の hot path を軽量化しています。`BlockPos.MutableB
 
 Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。Minecraft/Prism の JVM は AWT headless になる場合があるため、v0.2.1 以降では AWT `FileDialog` を使わず、Windows PowerShell の `System.Windows.Forms.SaveFileDialog` / `OpenFileDialog` を呼び出します。
 
-v0.4.0 から、`world.json` と `actions.json` のネットワーク転送は UTF-8 JSON を gzip 圧縮した byte array で行います。保存されるファイル自体は従来通り通常の `.json` です。
+v0.4.0 から、`world.json` と `actions.json` のネットワーク転送は UTF-8 JSON を gzip 圧縮した byte array で行います。保存されるファイル自体は通常の `.json` です。
 
 ```text
 /architect dump <radius>
-server: world snapshot 作成
+server: section scan → palette/RLE snapshot 作成
         ↓
 gzip圧縮
         ↓
@@ -94,43 +96,52 @@ C2S: compressed actions.json
 server: gzip展開 → 検証 → 施工
 ```
 
-転送制限は、展開後 JSON が最大 16 MiB、gzip 圧縮後 payload が最大 1,800,000 bytes です。gzip 展開時も 16 MiB を超えた時点で拒否するため、異常に大きく展開される payload は受理しません。
+転送制限は、展開後 JSON が最大 16 MiB、gzip 圧縮後 payload が最大 1,800,000 bytes です。gzip 展開時も 16 MiB を超えた時点で拒否します。
 
-`/architect dump` の成功メッセージには、展開前と gzip 圧縮後の転送サイズが表示されます。
+## world.json schema v2
 
-## world.json
-
-プレイヤー位置を `origin` とし、ブロックは相対座標で格納します。`blocks` に存在しない座標は `minecraft:air` として扱います。
-
-v0.3.0 から、BlockState property を持つブロックには `state` が含まれます。バニラだけでなく、Forge registry に登録されている MOD ブロックも同じ形式で出力されます。
+v0.6.0 から world snapshot は palette + X方向RLE形式です。`defaultBlock` は `minecraft:air` なので、`runs` に存在しない座標は air です。
 
 ```json
 {
-  "p": [4, 0, -2],
-  "block": "minecraft:oak_stairs",
-  "state": {
-    "facing": "east",
-    "half": "bottom",
-    "shape": "straight",
-    "waterlogged": "false"
-  }
+  "schema": 2,
+  "snapshotId": "...",
+  "dimension": "minecraft:overworld",
+  "facing": "north",
+  "origin": [100, 64, 100],
+  "bounds": {
+    "min": [-32, -32, -32],
+    "max": [32, 32, 32]
+  },
+  "defaultBlock": "minecraft:air",
+  "encoding": "palette-rle-x-v1",
+  "runFormat": "[x,y,z,length,paletteIndex], length advances +X",
+  "palette": [
+    {"block": "minecraft:stone"},
+    {
+      "block": "minecraft:oak_stairs",
+      "state": {
+        "facing": "east",
+        "half": "bottom",
+        "shape": "straight",
+        "waterlogged": "false"
+      }
+    }
+  ],
+  "runs": [
+    [-32, -10, -32, 65, 0],
+    [4, 0, -2, 1, 1]
+  ]
 }
 ```
 
-主な情報:
+`runs` の各要素は `[x, y, z, length, paletteIndex]` です。座標は origin からの相対座標で、`length` は +X 方向に同じ palette entry が何ブロック続くかを表します。run は section 境界をまたぎません。
 
-- schema version
-- snapshot ID
-- dimension
-- player facing
-- origin
-- dump bounds
-- non-air blocks
-- block state properties
+palette entry は block ID と任意の BlockState property を持ちます。バニラだけでなく Forge registry に登録された MOD block/state も同じ形式です。
 
 ## actions.json schema v1
 
-`state` は任意です。省略した場合は、そのブロックの default BlockState が使われます。
+`actions.json` は従来通り schema 1 です。world schema 1 / 2 のどちらを元にしていても、最新 snapshotId / origin / bounds / dimension を使って検証します。
 
 ```json
 {
@@ -167,13 +178,13 @@ v0.3.0 から、BlockState property を持つブロックには `state` が含�
 
 ### Validation before apply
 
-- `schema == 1`
+- world schema が 1 または 2
+- actions schema が 1
 - `snapshotId` が最新 `world.json` と一致
 - dimension が一致
 - dump 範囲内のみ
 - block ID が Forge registry に存在
-- BlockState property が対象ブロックに存在
-- BlockState value が対象 property の許可値に含まれる
+- BlockState property / value が有効
 - 1回最大4096 placements
 - world border / build height 内
 - 対象 chunk がロード済み
@@ -188,6 +199,7 @@ v0.3.0 から、BlockState property を持つブロックには `state` が含�
 - undo 未実装
 - `set` / `fill` の重複座標も placement 数に含む
 - 展開後 JSON は最大 16 MiB、gzip payload は最大 1,800,000 bytes
+- 極端にランダムな BlockState 配置では RLE 効果が小さくなる
 - AI API との自動接続は未実装
 
 ## Planned direction
@@ -197,7 +209,6 @@ v0.3.0 から、BlockState property を持つブロックには `state` が含�
 - undo
 - chunked transfer for snapshots that still exceed the gzip payload limit
 - AI API / agent bridge
-- より大きい範囲を効率よく扱う world representation
 
 ## License
 
