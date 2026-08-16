@@ -8,6 +8,7 @@ public final class ArtificialArchitectMod {
     public static final String MOD_ID = "artificialarchitect";
 
     public ArtificialArchitectMod() {
+        ArtificialArchitectNetwork.register();
         MinecraftForge.EVENT_BUS.addListener(ArtificialArchitectCommands::onRegisterCommands);
     }
 }
