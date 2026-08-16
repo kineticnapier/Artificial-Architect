@@ -9,6 +9,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
@@ -62,6 +63,12 @@ public final class WorldExporter {
                     JsonObject block = new JsonObject();
                     block.add("p", vec(dx, dy, dz));
                     block.addProperty("block", key.toString());
+
+                    JsonObject stateObject = serializeState(state);
+                    if (stateObject.size() > 0) {
+                        block.add("state", stateObject);
+                    }
+
                     blocks.add(block);
                     nonAirCount++;
                 }
@@ -75,6 +82,23 @@ public final class WorldExporter {
         Files.writeString(output, json, StandardCharsets.UTF_8);
 
         return new ExportResult(output, snapshotId, nonAirCount, (radius * 2 + 1), json);
+    }
+
+    private static JsonObject serializeState(BlockState state) {
+        JsonObject out = new JsonObject();
+        for (Property<?> property : state.getProperties()) {
+            addProperty(out, state, property);
+        }
+        return out;
+    }
+
+    private static <T extends Comparable<T>> void addProperty(
+            JsonObject out,
+            BlockState state,
+            Property<T> property
+    ) {
+        T value = state.getValue(property);
+        out.addProperty(property.getName(), property.getName(value));
     }
 
     private static JsonArray vec(int x, int y, int z) {
