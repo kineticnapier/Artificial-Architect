@@ -9,6 +9,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public final class ActionExecutor {
     public static final int MAX_CHANGES = 4096;
@@ -91,20 +93,25 @@ public final class ActionExecutor {
             }
 
             JsonObject action = element.getAsJsonObject();
-            String type = requireString(action, "type", "actions[" + i + "]");
-            BlockState state = resolveBlockState(requireString(action, "block", "actions[" + i + "]"));
+            String where = "actions[" + i + "]";
+            String type = requireString(action, "type", where);
+            BlockState state = resolveBlockState(
+                    requireString(action, "block", where),
+                    optionalObject(action, "state", where),
+                    where
+            );
 
             switch (type) {
                 case "set" -> {
-                    Vec3i p = readVec3(action.get("p"), "actions[" + i + "].p");
-                    validateRelative(p, min, max, "actions[" + i + "].p");
+                    Vec3i p = readVec3(action.get("p"), where + ".p");
+                    validateRelative(p, min, max, where + ".p");
                     addPlacement(placements, toWorld(origin, p), state);
                 }
                 case "fill" -> {
-                    Vec3i from = readVec3(action.get("from"), "actions[" + i + "].from");
-                    Vec3i to = readVec3(action.get("to"), "actions[" + i + "].to");
-                    validateRelative(from, min, max, "actions[" + i + "].from");
-                    validateRelative(to, min, max, "actions[" + i + "].to");
+                    Vec3i from = readVec3(action.get("from"), where + ".from");
+                    Vec3i to = readVec3(action.get("to"), where + ".to");
+                    validateRelative(from, min, max, where + ".from");
+                    validateRelative(to, min, max, where + ".to");
 
                     int minX = Math.min(from.x, to.x);
                     int minY = Math.min(from.y, to.y);
@@ -190,16 +197,60 @@ public final class ActionExecutor {
         return new BlockPos(origin.x + relative.x, origin.y + relative.y, origin.z + relative.z);
     }
 
-    private static BlockState resolveBlockState(String blockId) throws ValidationException {
+    private static BlockState resolveBlockState(
+            String blockId,
+            JsonObject stateObject,
+            String where
+    ) throws ValidationException {
         ResourceLocation id = ResourceLocation.tryParse(blockId);
         if (id == null || !ForgeRegistries.BLOCKS.containsKey(id)) {
             throw new ValidationException("存在しない block ID: " + blockId);
         }
+
         Block block = ForgeRegistries.BLOCKS.getValue(id);
         if (block == null) {
             throw new ValidationException("block を取得できません: " + blockId);
         }
-        return block.defaultBlockState();
+
+        BlockState state = block.defaultBlockState();
+        if (stateObject == null) {
+            return state;
+        }
+
+        for (var entry : stateObject.entrySet()) {
+            String propertyName = entry.getKey();
+            JsonElement rawElement = entry.getValue();
+            if (!rawElement.isJsonPrimitive()) {
+                throw new ValidationException(where + ".state." + propertyName + " は文字列/数値/boolである必要があります。");
+            }
+
+            Property<?> property = block.getStateDefinition().getProperty(propertyName);
+            if (property == null) {
+                throw new ValidationException(
+                        where + ".state に存在しないpropertyがあります: " + propertyName
+                                + " (block=" + blockId + ")"
+                );
+            }
+
+            state = applyProperty(state, property, rawElement.getAsString(), where + ".state." + propertyName);
+        }
+
+        return state;
+    }
+
+    private static <T extends Comparable<T>> BlockState applyProperty(
+            BlockState state,
+            Property<T> property,
+            String rawValue,
+            String where
+    ) throws ValidationException {
+        Optional<T> parsed = property.getValue(rawValue);
+        if (parsed.isEmpty()) {
+            throw new ValidationException(
+                    where + " の値 '" + rawValue + "' は不正です。許可値=" + property.getPossibleValues()
+            );
+        }
+        return state.setValue(property, parsed.get());
     }
 
     private static void validateRelative(Vec3i p, Vec3i min, Vec3i max, String name) throws ValidationException {
@@ -251,6 +302,17 @@ public final class ActionExecutor {
     private static JsonObject requireObject(JsonObject object, String key, String where) throws ValidationException {
         JsonElement value = object.get(key);
         if (value == null || !value.isJsonObject()) {
+            throw new ValidationException(where + "." + key + " は object である必要があります。");
+        }
+        return value.getAsJsonObject();
+    }
+
+    private static JsonObject optionalObject(JsonObject object, String key, String where) throws ValidationException {
+        JsonElement value = object.get(key);
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (!value.isJsonObject()) {
             throw new ValidationException(where + "." + key + " は object である必要があります。");
         }
         return value.getAsJsonObject();
