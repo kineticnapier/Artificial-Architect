@@ -31,7 +31,7 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.4.0.jar
+build/libs/artificialarchitect-0.5.0.jar
 ```
 
 ## Usage
@@ -47,6 +47,8 @@ build/libs/artificialarchitect-0.4.0.jar
 クライアント側で Windows 標準の保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
 
 サーバー側にも最新 snapshot の内部コピーが `.minecraft/artificialarchitect/world.json` として保存されます。これは `actions.json` の `snapshotId`、origin、bounds、dimension の検証に使われます。
+
+v0.5.0 では dump の hot path を軽量化しています。`BlockPos.MutableBlockPos` を再利用し、同一 `BlockState` の registry ID と property serialization をキャッシュし、巨大な Gson DOM を構築せず `JsonWriter` で直接 JSON を生成します。成功メッセージには build / write / gzip+send / total の時間と、観測した unique BlockState 数も表示されます。
 
 ### 2. AI に渡す
 

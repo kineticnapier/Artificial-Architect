@@ -1,9 +1,6 @@
 package dev.kineticnapier.artificialarchitect;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
+import com.google.gson.stream.JsonWriter;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
@@ -13,107 +10,174 @@ import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class WorldExporter {
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-
     private WorldExporter() {}
 
     public static ExportResult export(ServerPlayer player, int radius) throws IOException {
         ServerLevel level = player.serverLevel();
         BlockPos origin = player.blockPosition();
         String snapshotId = UUID.randomUUID().toString();
+        int sideLength = radius * 2 + 1;
 
-        JsonObject root = new JsonObject();
-        root.addProperty("schema", 1);
-        root.addProperty("snapshotId", snapshotId);
-        root.addProperty("dimension", level.dimension().location().toString());
-        root.addProperty("facing", player.getDirection().getName());
-        root.add("origin", vec(origin.getX(), origin.getY(), origin.getZ()));
+        long buildStart = System.nanoTime();
 
-        JsonObject bounds = new JsonObject();
-        bounds.add("min", vec(-radius, -radius, -radius));
-        bounds.add("max", vec(radius, radius, radius));
-        root.add("bounds", bounds);
+        StringWriter stringWriter = new StringWriter(Math.min(1 << 20, sideLength * sideLength * 32));
+        JsonWriter writer = new JsonWriter(stringWriter);
+        writer.setIndent("  ");
 
-        // blocks に存在しない座標は air と解釈する。
-        root.addProperty("defaultBlock", "minecraft:air");
-
-        JsonArray blocks = new JsonArray();
+        Map<BlockState, SerializedState> stateCache = new IdentityHashMap<>();
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         int nonAirCount = 0;
 
+        writer.beginObject();
+        writer.name("schema").value(1);
+        writer.name("snapshotId").value(snapshotId);
+        writer.name("dimension").value(level.dimension().location().toString());
+        writer.name("facing").value(player.getDirection().getName());
+        writeVec(writer, origin.getX(), origin.getY(), origin.getZ());
+
+        writer.name("bounds").beginObject();
+        writer.name("min");
+        writeVecValue(writer, -radius, -radius, -radius);
+        writer.name("max");
+        writeVecValue(writer, radius, radius, radius);
+        writer.endObject();
+
+        // blocks に存在しない座標は air と解釈する。
+        writer.name("defaultBlock").value("minecraft:air");
+        writer.name("blocks").beginArray();
+
+        int originX = origin.getX();
+        int originY = origin.getY();
+        int originZ = origin.getZ();
+
         for (int dy = -radius; dy <= radius; dy++) {
+            int y = originY + dy;
             for (int dz = -radius; dz <= radius; dz++) {
+                int z = originZ + dz;
                 for (int dx = -radius; dx <= radius; dx++) {
-                    BlockPos pos = origin.offset(dx, dy, dz);
-                    BlockState state = level.getBlockState(pos);
+                    mutablePos.set(originX + dx, y, z);
+                    BlockState state = level.getBlockState(mutablePos);
                     if (state.isAir()) {
                         continue;
                     }
 
-                    ResourceLocation key = ForgeRegistries.BLOCKS.getKey(state.getBlock());
-                    if (key == null) {
-                        continue;
+                    SerializedState serialized = stateCache.get(state);
+                    if (serialized == null) {
+                        serialized = serializeState(state);
+                        if (serialized == null) {
+                            continue;
+                        }
+                        stateCache.put(state, serialized);
                     }
 
-                    JsonObject block = new JsonObject();
-                    block.add("p", vec(dx, dy, dz));
-                    block.addProperty("block", key.toString());
+                    writer.beginObject();
+                    writer.name("p");
+                    writeVecValue(writer, dx, dy, dz);
+                    writer.name("block").value(serialized.blockId());
 
-                    JsonObject stateObject = serializeState(state);
-                    if (stateObject.size() > 0) {
-                        block.add("state", stateObject);
+                    if (!serialized.properties().isEmpty()) {
+                        writer.name("state").beginObject();
+                        for (StateProperty property : serialized.properties()) {
+                            writer.name(property.name()).value(property.value());
+                        }
+                        writer.endObject();
                     }
 
-                    blocks.add(block);
+                    writer.endObject();
                     nonAirCount++;
                 }
             }
         }
 
-        root.add("blocks", blocks);
+        writer.endArray();
+        writer.endObject();
+        writer.close();
 
-        String json = GSON.toJson(root);
+        String json = stringWriter.toString();
+        long buildEnd = System.nanoTime();
+
+        byte[] utf8 = json.getBytes(StandardCharsets.UTF_8);
         Path output = ArtificialArchitectPaths.worldJson();
-        Files.writeString(output, json, StandardCharsets.UTF_8);
+        long writeStart = System.nanoTime();
+        Files.write(output, utf8);
+        long writeEnd = System.nanoTime();
 
-        return new ExportResult(output, snapshotId, nonAirCount, (radius * 2 + 1), json);
+        return new ExportResult(
+                output,
+                snapshotId,
+                nonAirCount,
+                sideLength,
+                json,
+                utf8.length,
+                stateCache.size(),
+                nanosToMillis(buildEnd - buildStart),
+                nanosToMillis(writeEnd - writeStart)
+        );
     }
 
-    private static JsonObject serializeState(BlockState state) {
-        JsonObject out = new JsonObject();
-        for (Property<?> property : state.getProperties()) {
-            addProperty(out, state, property);
+    private static SerializedState serializeState(BlockState state) {
+        ResourceLocation key = ForgeRegistries.BLOCKS.getKey(state.getBlock());
+        if (key == null) {
+            return null;
         }
-        return out;
+
+        List<StateProperty> properties = new ArrayList<>(state.getProperties().size());
+        for (Property<?> property : state.getProperties()) {
+            addProperty(properties, state, property);
+        }
+        return new SerializedState(key.toString(), List.copyOf(properties));
     }
 
     private static <T extends Comparable<T>> void addProperty(
-            JsonObject out,
+            List<StateProperty> out,
             BlockState state,
             Property<T> property
     ) {
         T value = state.getValue(property);
-        out.addProperty(property.getName(), property.getName(value));
+        out.add(new StateProperty(property.getName(), property.getName(value)));
     }
 
-    private static JsonArray vec(int x, int y, int z) {
-        JsonArray array = new JsonArray();
-        array.add(x);
-        array.add(y);
-        array.add(z);
-        return array;
+    private static void writeVec(JsonWriter writer, int x, int y, int z) throws IOException {
+        writer.name("origin");
+        writeVecValue(writer, x, y, z);
     }
+
+    private static void writeVecValue(JsonWriter writer, int x, int y, int z) throws IOException {
+        writer.beginArray();
+        writer.value(x);
+        writer.value(y);
+        writer.value(z);
+        writer.endArray();
+    }
+
+    private static long nanosToMillis(long nanos) {
+        return Math.round(nanos / 1_000_000.0);
+    }
+
+    private record StateProperty(String name, String value) {}
+
+    private record SerializedState(String blockId, List<StateProperty> properties) {}
 
     public record ExportResult(
             Path path,
             String snapshotId,
             int nonAirBlocks,
             int sideLength,
-            String json
+            String json,
+            int rawBytes,
+            int uniqueStates,
+            long buildJsonMillis,
+            long writeMillis
     ) {}
 }

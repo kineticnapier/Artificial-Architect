@@ -9,8 +9,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.RegisterCommandsEvent;
 
-import java.nio.charset.StandardCharsets;
-
 public final class ArtificialArchitectCommands {
     private ArtificialArchitectCommands() {}
 
@@ -36,17 +34,26 @@ public final class ArtificialArchitectCommands {
         int radius = IntegerArgumentType.getInteger(context, "radius");
 
         try {
+            long totalStart = System.nanoTime();
             ServerPlayer player = source.getPlayerOrException();
             WorldExporter.ExportResult result = WorldExporter.export(player, radius);
 
-            int rawBytes = result.json().getBytes(StandardCharsets.UTF_8).length;
+            long gzipStart = System.nanoTime();
             int compressedBytes = ArtificialArchitectNetwork.openSaveDialog(player, result.json());
+            long gzipSendMillis = nanosToMillis(System.nanoTime() - gzipStart);
+            long totalMillis = nanosToMillis(System.nanoTime() - totalStart);
+
             source.sendSuccess(
                     () -> Component.literal(
                             "Artificial Architect: world.json の保存ダイアログを開きました"
                                     + " | side=" + result.sideLength()
                                     + " | nonAir=" + result.nonAirBlocks()
-                                    + " | transfer=" + formatBytes(rawBytes) + " -> " + formatBytes(compressedBytes) + " gzip"
+                                    + " | states=" + result.uniqueStates()
+                                    + " | transfer=" + formatBytes(result.rawBytes()) + " -> " + formatBytes(compressedBytes) + " gzip"
+                                    + " | time=build " + result.buildJsonMillis() + "ms"
+                                    + ", write " + result.writeMillis() + "ms"
+                                    + ", gzip+send " + gzipSendMillis + "ms"
+                                    + ", total " + totalMillis + "ms"
                                     + " | snapshotId=" + result.snapshotId()
                     ),
                     false
@@ -85,5 +92,9 @@ public final class ArtificialArchitectCommands {
             return String.format("%.1f KiB", bytes / 1024.0);
         }
         return bytes + " B";
+    }
+
+    private static long nanosToMillis(long nanos) {
+        return Math.round(nanos / 1_000_000.0);
     }
 }
