@@ -6,10 +6,10 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -160,9 +161,25 @@ public final class WorldExporter {
                 futures.add(executor.submit(() -> encodeRuns(snapshot)));
             }
 
-            StringWriter stringWriter = new StringWriter(Math.min(1 << 20, Math.max(4096, snapshots.size() * 256)));
+            List<Run> sectionRuns = new ArrayList<>();
+            for (Future<List<Run>> future : futures) {
+                try {
+                    sectionRuns.addAll(future.get());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("RLE encode interrupted", e);
+                } catch (ExecutionException e) {
+                    throw new IOException("RLE encode failed", e.getCause());
+                }
+            }
+
+            int sectionRunCount = sectionRuns.size();
+            List<Run> runs = coalesceRunsAcrossSections(sectionRuns);
+
+            // AI-facing world.json is deliberately minified. The schema is self-describing,
+            // and removing indentation/newlines saves a large amount of input tokens at r=64/128.
+            StringWriter stringWriter = new StringWriter(Math.min(1 << 20, Math.max(4096, runs.size() * 24)));
             JsonWriter writer = new JsonWriter(stringWriter);
-            writer.setIndent("  ");
 
             writer.beginObject();
             writer.name("schema").value(2);
@@ -199,28 +216,14 @@ public final class WorldExporter {
             writer.endArray();
 
             writer.name("runs").beginArray();
-            int runCount = 0;
-            for (Future<List<Run>> future : futures) {
-                List<Run> runs;
-                try {
-                    runs = future.get();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("RLE encode interrupted", e);
-                } catch (ExecutionException e) {
-                    throw new IOException("RLE encode failed", e.getCause());
-                }
-
-                for (Run run : runs) {
-                    writer.beginArray();
-                    writer.value(run.x());
-                    writer.value(run.y());
-                    writer.value(run.z());
-                    writer.value(run.length());
-                    writer.value(run.paletteIndex());
-                    writer.endArray();
-                    runCount++;
-                }
+            for (Run run : runs) {
+                writer.beginArray();
+                writer.value(run.x());
+                writer.value(run.y());
+                writer.value(run.z());
+                writer.value(run.length());
+                writer.value(run.paletteIndex());
+                writer.endArray();
             }
             writer.endArray();
             writer.endObject();
@@ -243,7 +246,8 @@ public final class WorldExporter {
                     json,
                     utf8.length,
                     palette.size(),
-                    runCount,
+                    runs.size(),
+                    sectionRunCount,
                     scannedSections,
                     skippedAirSections,
                     workers,
@@ -290,6 +294,40 @@ public final class WorldExporter {
         }
 
         return runs;
+    }
+
+    private static List<Run> coalesceRunsAcrossSections(List<Run> runs) {
+        if (runs.size() < 2) {
+            return runs;
+        }
+
+        runs.sort(Comparator
+                .comparingInt(Run::y)
+                .thenComparingInt(Run::z)
+                .thenComparingInt(Run::x));
+
+        List<Run> merged = new ArrayList<>(runs.size());
+        Run current = runs.get(0);
+        for (int i = 1; i < runs.size(); i++) {
+            Run next = runs.get(i);
+            if (current.y() == next.y()
+                    && current.z() == next.z()
+                    && current.paletteIndex() == next.paletteIndex()
+                    && current.x() + current.length() == next.x()) {
+                current = new Run(
+                        current.x(),
+                        current.y(),
+                        current.z(),
+                        current.length() + next.length(),
+                        current.paletteIndex()
+                );
+            } else {
+                merged.add(current);
+                current = next;
+            }
+        }
+        merged.add(current);
+        return merged;
     }
 
     private static SerializedState serializeState(BlockState state) {
@@ -351,6 +389,7 @@ public final class WorldExporter {
             int rawBytes,
             int uniqueStates,
             int runCount,
+            int sectionRunCount,
             int scannedSections,
             int skippedAirSections,
             int workers,

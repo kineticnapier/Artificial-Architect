@@ -38,7 +38,8 @@ public final class ArtificialArchitectCommands {
             WorldExporter.ExportResult result = WorldExporter.export(player, radius);
 
             long gzipStart = System.nanoTime();
-            int compressedBytes = ArtificialArchitectNetwork.openSaveDialog(player, result.json());
+            ArtificialArchitectNetwork.WorldTransferStats transfer =
+                    ArtificialArchitectNetwork.openSaveDialog(player, result.json());
             long gzipSendMillis = nanosToMillis(System.nanoTime() - gzipStart);
             long totalMillis = nanosToMillis(System.nanoTime() - totalStart);
 
@@ -49,10 +50,13 @@ public final class ArtificialArchitectCommands {
                                     + " | nonAir=" + result.nonAirBlocks()
                                     + " | palette=" + result.uniqueStates()
                                     + " | runs=" + result.runCount()
+                                    + " (section=" + result.sectionRunCount() + ")"
                                     + " | sections=" + result.scannedSections()
                                     + " (air-skip=" + result.skippedAirSections() + ")"
                                     + " | workers=" + result.workers()
-                                    + " | transfer=" + formatBytes(result.rawBytes()) + " -> " + formatBytes(compressedBytes) + " gzip"
+                                    + " | transfer=" + formatBytes(result.rawBytes())
+                                    + " -> " + formatBytes(transfer.compressedBytes()) + " gzip"
+                                    + " / " + transfer.chunkCount() + " chunks"
                                     + " | time=scan " + result.scanMillis() + "ms"
                                     + ", rle+json " + result.encodeMillis() + "ms"
                                     + ", write " + result.writeMillis() + "ms"

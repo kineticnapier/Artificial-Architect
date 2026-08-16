@@ -12,11 +12,7 @@ AI に Minecraft のワールド情報を渡し、AI が生成した建築操作
 - Windows PowerShell 5+ または PowerShell 7+
 - 初回ビルド時のみインターネット接続
 
-Gradle の事前インストールは不要です。`gradlew` が Gradle 8.8 を `.gradle-bootstrap/` に取得します。
-
 ## Build
-
-PowerShell:
 
 ```powershell
 .\gradlew build
@@ -31,26 +27,26 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.6.0.jar
+build/libs/artificialarchitect-0.7.0.jar
 ```
 
 ## Usage
 
 ### 1. world.json を保存
 
-建築基準位置に立って次を実行します。
+建築基準位置に立って実行します。
 
 ```text
 /architect dump 32
 ```
 
-radius は 1〜128 です。クライアント側で Windows 標準の保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
+radius は 1〜128 です。Windows 標準の保存ダイアログが開きます。
 
-サーバー側にも最新 snapshot の内部コピーが `.minecraft/artificialarchitect/world.json` として保存されます。これは `actions.json` の `snapshotId`、origin、bounds、dimension の検証に使われます。
+サーバー側にも最新 snapshot の内部コピーが `.minecraft/artificialarchitect/world.json` として保存され、`actions.json` の snapshotId / origin / bounds / dimension 検証に使われます。
 
-v0.6.0 では dump を chunk section 単位で走査します。完全な air section は `LevelChunkSection.hasOnlyAir()` で丸ごとスキップし、非空 section だけを直接読みます。BlockState は palette ID に変換し、section snapshot の RLE 生成は最大8 workerで並列化します。Minecraft world そのものを worker thread から読み取らないため、MODを含むワールドへの非同期 read は行いません。
+v0.6.0 以降は chunk section 単位で走査し、完全な air section を丸ごとスキップします。BlockState は palette ID に変換し、section snapshot の RLE 生成を最大8 workerで並列化します。Minecraft world 自体は server thread からのみ読みます。
 
-成功メッセージには palette 数、run 数、走査 section 数、air section skip 数、worker 数、scan / RLE+JSON / write / gzip+send / total の時間が表示されます。
+v0.7.0 では AI 入力サイズを減らすため、schema v2 の `world.json` を minified JSON として出力し、同じ Y/Z 行で同じ BlockState が section 境界をまたいで連続する run を結合します。意味情報は削らず、palette / BlockState / bounds / origin は保持します。
 
 ### 2. AI に渡す
 
@@ -62,45 +58,52 @@ v0.6.0 では dump を chunk section 単位で走査します。完全な air se
 /architect apply
 ```
 
-クライアント側で Windows 標準のファイル選択ダイアログが開くので、AI が生成した `actions.json` を選択します。
+Windows 標準のファイル選択ダイアログから `actions.json` を選択します。全検証に成功した場合だけワールドへ反映されます。
 
-選択した JSON 本文がサーバーへ送られ、既存の検証をすべて通過した場合のみワールドへ反映されます。Prism Launcher の instance フォルダへ手作業でファイルをコピーする必要はありません。
+互換用に `/aibridge` も同じコマンドとして使用できます。
 
-初期 PoC との互換用に `/aibridge` も同じコマンドとして使用できます。
+## Chunked file-dialog bridge
 
-## File-dialog bridge
-
-Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。Minecraft/Prism の JVM は AWT headless になる場合があるため、v0.2.1 以降では AWT `FileDialog` を使わず、Windows PowerShell の `System.Windows.Forms.SaveFileDialog` / `OpenFileDialog` を呼び出します。
-
-v0.4.0 から、`world.json` と `actions.json` のネットワーク転送は UTF-8 JSON を gzip 圧縮した byte array で行います。保存されるファイル自体は通常の `.json` です。
+v0.4.0 以降、JSON のネットワーク転送には gzip を使います。v0.7.0 から `world.json` は gzip 後のデータを最大 900,000 bytes ごとに分割して複数の S2C packet で送信し、client で再結合してから展開します。
 
 ```text
 /architect dump <radius>
-server: section scan → palette/RLE snapshot 作成
+server: section scan → palette/RLE snapshot
         ↓
-gzip圧縮
+minified JSON → gzip
         ↓
-S2C: compressed world.json
+900 KB 以下の chunks に分割
         ↓
-client: gzip展開 → Windows 保存ダイアログ
+S2C: chunk 0, 1, 2, ...
+        ↓
+client: 再結合 → gzip展開 → Windows 保存ダイアログ
 
 /architect apply
 server: 読み込み要求
         ↓
-S2C: ファイルダイアログを開く
-        ↓
-client: actions.json 選択・読み込み → gzip圧縮
+client: actions.json 選択 → gzip圧縮
         ↓
 C2S: compressed actions.json
         ↓
 server: gzip展開 → 検証 → 施工
 ```
 
-転送制限は、展開後 JSON が最大 16 MiB、gzip 圧縮後 payload が最大 1,800,000 bytes です。gzip 展開時も 16 MiB を超えた時点で拒否します。
+world snapshot の制限:
+
+- 展開後 JSON: 最大 128 MiB
+- gzip 全体: 最大 32 MiB
+- 1 chunk: 最大 900,000 bytes
+- 最大 64 chunks
+
+`actions.json` は従来通り展開後 16 MiB / gzip 1,800,000 bytes 上限です。
+
+`/architect dump` の成功メッセージには palette 数、結合後 run 数、section 内 run 数、section 数、air skip 数、worker 数、raw/gzip サイズ、chunk 数、各処理時間が表示されます。
 
 ## world.json schema v2
 
-v0.6.0 から world snapshot は palette + X方向RLE形式です。`defaultBlock` は `minecraft:air` なので、`runs` に存在しない座標は air です。
+world snapshot は palette + X方向RLE形式です。`defaultBlock` は `minecraft:air` なので、`runs` に存在しない座標は air です。
+
+実際の v0.7.0 ファイルは AI 向けに改行・indent なしで保存されます。読みやすく整形すると次の形です。
 
 ```json
 {
@@ -109,24 +112,13 @@ v0.6.0 から world snapshot は palette + X方向RLE形式です。`defaultBloc
   "dimension": "minecraft:overworld",
   "facing": "north",
   "origin": [100, 64, 100],
-  "bounds": {
-    "min": [-32, -32, -32],
-    "max": [32, 32, 32]
-  },
+  "bounds": {"min": [-32, -32, -32], "max": [32, 32, 32]},
   "defaultBlock": "minecraft:air",
   "encoding": "palette-rle-x-v1",
   "runFormat": "[x,y,z,length,paletteIndex], length advances +X",
   "palette": [
     {"block": "minecraft:stone"},
-    {
-      "block": "minecraft:oak_stairs",
-      "state": {
-        "facing": "east",
-        "half": "bottom",
-        "shape": "straight",
-        "waterlogged": "false"
-      }
-    }
+    {"block": "minecraft:oak_stairs", "state": {"facing": "east", "half": "bottom"}}
   ],
   "runs": [
     [-32, -10, -32, 65, 0],
@@ -135,41 +127,24 @@ v0.6.0 から world snapshot は palette + X方向RLE形式です。`defaultBloc
 }
 ```
 
-`runs` の各要素は `[x, y, z, length, paletteIndex]` です。座標は origin からの相対座標で、`length` は +X 方向に同じ palette entry が何ブロック続くかを表します。run は section 境界をまたぎません。
+`runs` の各要素は `[x, y, z, length, paletteIndex]` です。座標は origin からの相対座標で、`length` は +X 方向に同じ palette entry が何ブロック続くかを表します。v0.7.0 では連続していれば chunk/section 境界をまたいで1 runに結合できます。
 
 palette entry は block ID と任意の BlockState property を持ちます。バニラだけでなく Forge registry に登録された MOD block/state も同じ形式です。
 
 ## actions.json schema v1
 
-`actions.json` は従来通り schema 1 です。world schema 1 / 2 のどちらを元にしていても、最新 snapshotId / origin / bounds / dimension を使って検証します。
+`actions.json` は schema 1 のままです。world schema 1 / 2 のどちらから生成しても、最新 snapshot metadata で検証します。
 
 ```json
 {
   "schema": 1,
   "snapshotId": "world.json と同じ値",
   "actions": [
-    {
-      "type": "set",
-      "p": [0, 1, 0],
-      "block": "minecraft:oak_stairs",
-      "state": {
-        "facing": "north",
-        "half": "bottom",
-        "shape": "straight",
-        "waterlogged": "false"
-      }
-    },
-    {
-      "type": "fill",
-      "from": [-3, 0, -3],
-      "to": [3, 0, 3],
-      "block": "minecraft:stone_bricks"
-    }
+    {"type": "set", "p": [0, 1, 0], "block": "minecraft:oak_stairs", "state": {"facing": "north"}},
+    {"type": "fill", "from": [-3, 0, -3], "to": [3, 0, 3], "block": "minecraft:stone_bricks"}
   ]
 }
 ```
-
-`state` の property 名と値は、そのブロックの StateDefinition に存在するものだけ受理されます。存在しない property や不正な値は施工前に reject されます。
 
 ### Supported actions
 
@@ -183,8 +158,7 @@ palette entry は block ID と任意の BlockState property を持ちます。�
 - `snapshotId` が最新 `world.json` と一致
 - dimension が一致
 - dump 範囲内のみ
-- block ID が Forge registry に存在
-- BlockState property / value が有効
+- block ID / BlockState property / value が有効
 - 1回最大4096 placements
 - world border / build height 内
 - 対象 chunk がロード済み
@@ -198,7 +172,6 @@ palette entry は block ID と任意の BlockState property を持ちます。�
 - neighbor update によって state がMinecraft側で再計算されるブロックがある
 - undo 未実装
 - `set` / `fill` の重複座標も placement 数に含む
-- 展開後 JSON は最大 16 MiB、gzip payload は最大 1,800,000 bytes
 - 極端にランダムな BlockState 配置では RLE 効果が小さくなる
 - AI API との自動接続は未実装
 
@@ -207,7 +180,6 @@ palette entry は block ID と任意の BlockState property を持ちます。�
 - stairs / wall / line など高レベル建築 primitive
 - door / bed など複数ブロック構造の補助
 - undo
-- chunked transfer for snapshots that still exceed the gzip payload limit
 - AI API / agent bridge
 
 ## License
