@@ -16,14 +16,13 @@ public final class ArtificialArchitectCommands {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
 
         dispatcher.register(commandTree("architect"));
-        // Compatibility alias for the original MVP command.
         dispatcher.register(commandTree("aibridge"));
     }
 
     private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> commandTree(String name) {
         return Commands.literal(name)
                 .then(Commands.literal("dump")
-                        .then(Commands.argument("radius", IntegerArgumentType.integer(1, 32))
+                        .then(Commands.argument("radius", IntegerArgumentType.integer(1, 128))
                                 .executes(ArtificialArchitectCommands::dump)))
                 .then(Commands.literal("apply")
                         .executes(ArtificialArchitectCommands::apply));
@@ -48,9 +47,14 @@ public final class ArtificialArchitectCommands {
                             "Artificial Architect: world.json の保存ダイアログを開きました"
                                     + " | side=" + result.sideLength()
                                     + " | nonAir=" + result.nonAirBlocks()
-                                    + " | states=" + result.uniqueStates()
+                                    + " | palette=" + result.uniqueStates()
+                                    + " | runs=" + result.runCount()
+                                    + " | sections=" + result.scannedSections()
+                                    + " (air-skip=" + result.skippedAirSections() + ")"
+                                    + " | workers=" + result.workers()
                                     + " | transfer=" + formatBytes(result.rawBytes()) + " -> " + formatBytes(compressedBytes) + " gzip"
-                                    + " | time=build " + result.buildJsonMillis() + "ms"
+                                    + " | time=scan " + result.scanMillis() + "ms"
+                                    + ", rle+json " + result.encodeMillis() + "ms"
                                     + ", write " + result.writeMillis() + "ms"
                                     + ", gzip+send " + gzipSendMillis + "ms"
                                     + ", total " + totalMillis + "ms"
