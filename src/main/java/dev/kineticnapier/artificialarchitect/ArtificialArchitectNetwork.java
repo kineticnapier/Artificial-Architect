@@ -16,7 +16,8 @@ import java.io.IOException;
 import java.util.function.Supplier;
 
 public final class ArtificialArchitectNetwork {
-    public static final int MAX_JSON_BYTES = 16 * 1024 * 1024;
+    public static final int MAX_JSON_BYTES = 128 * 1024 * 1024;
+    public static final int MAX_ACTIONS_JSON_BYTES = 16 * 1024 * 1024;
     public static final int MAX_COMPRESSED_BYTES = 1_800_000;
 
     private static final String PROTOCOL_VERSION = "2";
@@ -52,11 +53,11 @@ public final class ArtificialArchitectNetwork {
     }
 
     public static int compressedSize(String json) {
-        return compressForTransfer(json, "JSON").length;
+        return compressForTransfer(json, "JSON", MAX_JSON_BYTES).length;
     }
 
     public static int openSaveDialog(ServerPlayer player, String json) {
-        byte[] compressed = compressForTransfer(json, "world.json");
+        byte[] compressed = compressForTransfer(json, "world.json", MAX_JSON_BYTES);
         CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new SaveWorldJsonPacket(compressed));
         return compressed.length;
     }
@@ -66,13 +67,13 @@ public final class ArtificialArchitectNetwork {
     }
 
     public static void submitActionsToServer(String json) {
-        byte[] compressed = compressForTransfer(json, "actions.json");
+        byte[] compressed = compressForTransfer(json, "actions.json", MAX_ACTIONS_JSON_BYTES);
         CHANNEL.sendToServer(new SubmitActionsJsonPacket(compressed));
     }
 
-    private static byte[] compressForTransfer(String json, String name) {
+    private static byte[] compressForTransfer(String json, String name, int maxJsonBytes) {
         try {
-            byte[] compressed = JsonGzip.compress(json, MAX_JSON_BYTES);
+            byte[] compressed = JsonGzip.compress(json, maxJsonBytes);
             if (compressed.length > MAX_COMPRESSED_BYTES) {
                 throw new IllegalArgumentException(
                         name + " のgzip転送サイズが上限を超えています: "
@@ -110,7 +111,7 @@ public final class ArtificialArchitectNetwork {
         }
 
         try {
-            String json = JsonGzip.decompress(message.compressedJson(), MAX_JSON_BYTES);
+            String json = JsonGzip.decompress(message.compressedJson(), MAX_ACTIONS_JSON_BYTES);
             ActionExecutor.ApplyResult result = ActionExecutor.apply(sender.serverLevel(), json);
             sender.sendSystemMessage(Component.literal(
                     "Artificial Architect: apply 完了 | actions=" + result.actionCount()
