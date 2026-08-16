@@ -31,7 +31,7 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.2.1.jar
+build/libs/artificialarchitect-0.3.0.jar
 ```
 
 ## Usage
@@ -66,7 +66,7 @@ build/libs/artificialarchitect-0.2.1.jar
 
 ## File-dialog bridge
 
-Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。Minecraft/Prism の JVM は AWT headless になる場合があるため、v0.2.1 では AWT `FileDialog` を使わず、Windows PowerShell の `System.Windows.Forms.SaveFileDialog` / `OpenFileDialog` を呼び出します。
+Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。Minecraft/Prism の JVM は AWT headless になる場合があるため、v0.2.1 以降では AWT `FileDialog` を使わず、Windows PowerShell の `System.Windows.Forms.SaveFileDialog` / `OpenFileDialog` を呼び出します。
 
 ```text
 /architect dump <radius>
@@ -94,6 +94,21 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 
 プレイヤー位置を `origin` とし、ブロックは相対座標で格納します。`blocks` に存在しない座標は `minecraft:air` として扱います。
 
+v0.3.0 から、BlockState property を持つブロックには `state` が含まれます。バニラだけでなく、Forge registry に登録されている MOD ブロックも同じ形式で出力されます。
+
+```json
+{
+  "p": [4, 0, -2],
+  "block": "minecraft:oak_stairs",
+  "state": {
+    "facing": "east",
+    "half": "bottom",
+    "shape": "straight",
+    "waterlogged": "false"
+  }
+}
+```
+
 主な情報:
 
 - schema version
@@ -103,8 +118,11 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 - origin
 - dump bounds
 - non-air blocks
+- block state properties
 
 ## actions.json schema v1
+
+`state` は任意です。省略した場合は、そのブロックの default BlockState が使われます。
 
 ```json
 {
@@ -114,7 +132,13 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
     {
       "type": "set",
       "p": [0, 1, 0],
-      "block": "minecraft:stone_bricks"
+      "block": "minecraft:oak_stairs",
+      "state": {
+        "facing": "north",
+        "half": "bottom",
+        "shape": "straight",
+        "waterlogged": "false"
+      }
     },
     {
       "type": "fill",
@@ -126,10 +150,12 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 }
 ```
 
+`state` の property 名と値は、そのブロックの StateDefinition に存在するものだけ受理されます。存在しない property や不正な値は施工前に reject されます。
+
 ### Supported actions
 
 - `set` — 1ブロック設置
-- `fill` — 直方体を一括設置
+- `fill` — 直方体を同一 BlockState で一括設置
 
 ### Validation before apply
 
@@ -138,6 +164,8 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 - dimension が一致
 - dump 範囲内のみ
 - block ID が Forge registry に存在
+- BlockState property が対象ブロックに存在
+- BlockState value が対象 property の許可値に含まれる
 - 1回最大4096 placements
 - world border / build height 内
 - 対象 chunk がロード済み
@@ -146,8 +174,9 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 ## Current limitations
 
 - file dialog は現在 Windows のみ対応
-- block state 未対応
 - block entity / inventory / entity は dump しない
+- door / bed など複数ブロックで1構造になるものは自動で相方を生成しない
+- neighbor update によって state がMinecraft側で再計算されるブロックがある
 - undo 未実装
 - `set` / `fill` の重複座標も placement 数に含む
 - JSON 転送上限 900,000 文字
@@ -155,8 +184,8 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 
 ## Planned direction
 
-- block state support
-- stairs / slabs / doors などの向き付き建築
+- stairs / wall / line など高レベル建築 primitive
+- door / bed など複数ブロック構造の補助
 - undo
 - 大きな snapshot の圧縮転送
 - AI API / agent bridge
