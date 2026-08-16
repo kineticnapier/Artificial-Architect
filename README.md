@@ -2,7 +2,7 @@
 
 AI に Minecraft のワールド情報を渡し、AI が生成した建築操作を安全にワールドへ反映する Forge 1.20.1 MOD です。
 
-現在は最小 PoC で、Minecraft → `world.json` → AI → `actions.json` → Minecraft の往復が動作します。
+現在は PoC 段階で、Minecraft → `world.json` → AI → `actions.json` → Minecraft の往復が動作します。
 
 ## Requirements
 
@@ -31,28 +31,64 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.1.0.jar
+build/libs/artificialarchitect-0.2.0.jar
 ```
 
 ## Usage
 
-1. jar を Forge 1.20.1 の `mods` に入れる。
-2. ワールドで建築基準位置に立つ。
-3. 周囲を JSON に出力する。
+### 1. world.json を保存
+
+建築基準位置に立って次を実行します。
 
 ```text
 /architect dump 8
 ```
 
-4. `.minecraft/artificialarchitect/world.json` を AI に渡す。
-5. AI が生成した JSON を `.minecraft/artificialarchitect/actions.json` として保存する。
-6. ワールドへ反映する。
+クライアント側でネイティブの保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
+
+サーバー側にも最新 snapshot の内部コピーが `.minecraft/artificialarchitect/world.json` として保存されます。これは `actions.json` の `snapshotId`、origin、bounds、dimension の検証に使われます。
+
+### 2. AI に渡す
+
+保存した `world.json` を AI に渡し、schema v1 の `actions.json` を生成します。
+
+### 3. actions.json を読み込んで施工
 
 ```text
 /architect apply
 ```
 
+クライアント側でファイル選択ダイアログが開くので、AI が生成した `actions.json` を選択します。
+
+選択した JSON 本文がサーバーへ送られ、既存の検証をすべて通過した場合のみワールドへ反映されます。Prism Launcher の instance フォルダへ手作業でファイルをコピーする必要はありません。
+
 初期 PoC との互換用に `/aibridge` も同じコマンドとして使用できます。
+
+## File-dialog bridge
+
+Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。
+
+```text
+/architect dump <radius>
+server: world snapshot 作成
+        ↓
+S2C: world.json 本文
+        ↓
+client: 保存ダイアログ
+
+/architect apply
+server: 読み込み要求
+        ↓
+S2C: ファイルダイアログを開く
+        ↓
+client: actions.json 選択・読み込み
+        ↓
+C2S: JSON 本文
+        ↓
+server: 検証 → 施工
+```
+
+JSON のネットワーク転送には現在 900,000 文字の上限があります。大きすぎる `world.json` の場合は `dump` radius を小さくしてください。
 
 ## world.json
 
@@ -113,13 +149,15 @@ build/libs/artificialarchitect-0.1.0.jar
 - block entity / inventory / entity は dump しない
 - undo 未実装
 - `set` / `fill` の重複座標も placement 数に含む
-- AI API との自動接続は未実装（現状は JSON を手動で受け渡す）
+- JSON 転送上限 900,000 文字
+- AI API との自動接続は未実装
 
 ## Planned direction
 
 - block state support
 - stairs / slabs / doors などの向き付き建築
 - undo
+- 大きな snapshot の圧縮転送
 - AI API / agent bridge
 - より大きい範囲を効率よく扱う world representation
 
