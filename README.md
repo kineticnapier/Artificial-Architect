@@ -31,7 +31,7 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.3.0.jar
+build/libs/artificialarchitect-0.4.0.jar
 ```
 
 ## Usage
@@ -68,27 +68,33 @@ build/libs/artificialarchitect-0.3.0.jar
 
 Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。Minecraft/Prism の JVM は AWT headless になる場合があるため、v0.2.1 以降では AWT `FileDialog` を使わず、Windows PowerShell の `System.Windows.Forms.SaveFileDialog` / `OpenFileDialog` を呼び出します。
 
+v0.4.0 から、`world.json` と `actions.json` のネットワーク転送は UTF-8 JSON を gzip 圧縮した byte array で行います。保存されるファイル自体は従来通り通常の `.json` です。
+
 ```text
 /architect dump <radius>
 server: world snapshot 作成
         ↓
-S2C: world.json 本文
+gzip圧縮
         ↓
-client: Windows 保存ダイアログ
+S2C: compressed world.json
+        ↓
+client: gzip展開 → Windows 保存ダイアログ
 
 /architect apply
 server: 読み込み要求
         ↓
 S2C: ファイルダイアログを開く
         ↓
-client: actions.json 選択・読み込み
+client: actions.json 選択・読み込み → gzip圧縮
         ↓
-C2S: JSON 本文
+C2S: compressed actions.json
         ↓
-server: 検証 → 施工
+server: gzip展開 → 検証 → 施工
 ```
 
-JSON のネットワーク転送には現在 900,000 文字の上限があります。大きすぎる `world.json` の場合は `dump` radius を小さくしてください。
+転送制限は、展開後 JSON が最大 16 MiB、gzip 圧縮後 payload が最大 1,800,000 bytes です。gzip 展開時も 16 MiB を超えた時点で拒否するため、異常に大きく展開される payload は受理しません。
+
+`/architect dump` の成功メッセージには、展開前と gzip 圧縮後の転送サイズが表示されます。
 
 ## world.json
 
@@ -179,7 +185,7 @@ v0.3.0 から、BlockState property を持つブロックには `state` が含�
 - neighbor update によって state がMinecraft側で再計算されるブロックがある
 - undo 未実装
 - `set` / `fill` の重複座標も placement 数に含む
-- JSON 転送上限 900,000 文字
+- 展開後 JSON は最大 16 MiB、gzip payload は最大 1,800,000 bytes
 - AI API との自動接続は未実装
 
 ## Planned direction
@@ -187,7 +193,7 @@ v0.3.0 から、BlockState property を持つブロックには `state` が含�
 - stairs / wall / line など高レベル建築 primitive
 - door / bed など複数ブロック構造の補助
 - undo
-- 大きな snapshot の圧縮転送
+- chunked transfer for snapshots that still exceed the gzip payload limit
 - AI API / agent bridge
 - より大きい範囲を効率よく扱う world representation
 

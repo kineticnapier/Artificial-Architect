@@ -9,6 +9,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.RegisterCommandsEvent;
 
+import java.nio.charset.StandardCharsets;
+
 public final class ArtificialArchitectCommands {
     private ArtificialArchitectCommands() {}
 
@@ -37,20 +39,14 @@ public final class ArtificialArchitectCommands {
             ServerPlayer player = source.getPlayerOrException();
             WorldExporter.ExportResult result = WorldExporter.export(player, radius);
 
-            if (!ArtificialArchitectNetwork.canTransfer(result.json())) {
-                source.sendFailure(Component.literal(
-                        "Artificial Architect: world.json がファイルダイアログ転送上限を超えました。"
-                                + " radius を小さくしてください。内部コピー: " + result.path()
-                ));
-                return 0;
-            }
-
-            ArtificialArchitectNetwork.openSaveDialog(player, result.json());
+            int rawBytes = result.json().getBytes(StandardCharsets.UTF_8).length;
+            int compressedBytes = ArtificialArchitectNetwork.openSaveDialog(player, result.json());
             source.sendSuccess(
                     () -> Component.literal(
                             "Artificial Architect: world.json の保存ダイアログを開きました"
                                     + " | side=" + result.sideLength()
                                     + " | nonAir=" + result.nonAirBlocks()
+                                    + " | transfer=" + formatBytes(rawBytes) + " -> " + formatBytes(compressedBytes) + " gzip"
                                     + " | snapshotId=" + result.snapshotId()
                     ),
                     false
@@ -79,5 +75,15 @@ public final class ArtificialArchitectCommands {
             e.printStackTrace();
             return 0;
         }
+    }
+
+    private static String formatBytes(int bytes) {
+        if (bytes >= 1024 * 1024) {
+            return String.format("%.2f MiB", bytes / (1024.0 * 1024.0));
+        }
+        if (bytes >= 1024) {
+            return String.format("%.1f KiB", bytes / 1024.0);
+        }
+        return bytes + " B";
     }
 }

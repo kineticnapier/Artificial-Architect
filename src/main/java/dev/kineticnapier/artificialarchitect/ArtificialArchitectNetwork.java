@@ -16,9 +16,10 @@ import java.io.IOException;
 import java.util.function.Supplier;
 
 public final class ArtificialArchitectNetwork {
-    public static final int MAX_JSON_CHARS = 900_000;
+    public static final int MAX_JSON_BYTES = 16 * 1024 * 1024;
+    public static final int MAX_COMPRESSED_BYTES = 1_800_000;
 
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "2";
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(ArtificialArchitectMod.MOD_ID, "main"),
             () -> PROTOCOL_VERSION,
@@ -50,17 +51,14 @@ public final class ArtificialArchitectNetwork {
                 .add();
     }
 
-    public static boolean canTransfer(String json) {
-        return json != null && json.length() <= MAX_JSON_CHARS;
+    public static int compressedSize(String json) {
+        return compressForTransfer(json, "JSON").length;
     }
 
-    public static void openSaveDialog(ServerPlayer player, String json) {
-        if (!canTransfer(json)) {
-            throw new IllegalArgumentException(
-                    "world.json がファイルダイアログ転送上限 (" + MAX_JSON_CHARS + " chars) を超えました。radius を小さくしてください。"
-            );
-        }
-        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new SaveWorldJsonPacket(json));
+    public static int openSaveDialog(ServerPlayer player, String json) {
+        byte[] compressed = compressForTransfer(json, "world.json");
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new SaveWorldJsonPacket(compressed));
+        return compressed.length;
     }
 
     public static void openActionsDialog(ServerPlayer player) {
@@ -68,16 +66,37 @@ public final class ArtificialArchitectNetwork {
     }
 
     public static void submitActionsToServer(String json) {
-        if (!canTransfer(json)) {
-            throw new IllegalArgumentException(
-                    "actions.json が転送上限 (" + MAX_JSON_CHARS + " chars) を超えています。"
-            );
+        byte[] compressed = compressForTransfer(json, "actions.json");
+        CHANNEL.sendToServer(new SubmitActionsJsonPacket(compressed));
+    }
+
+    private static byte[] compressForTransfer(String json, String name) {
+        try {
+            byte[] compressed = JsonGzip.compress(json, MAX_JSON_BYTES);
+            if (compressed.length > MAX_COMPRESSED_BYTES) {
+                throw new IllegalArgumentException(
+                        name + " のgzip転送サイズが上限を超えています: "
+                                + compressed.length + " > " + MAX_COMPRESSED_BYTES + " bytes"
+                );
+            }
+            return compressed;
+        } catch (IOException e) {
+            throw new IllegalArgumentException(name + " をgzip圧縮できません: " + e.getMessage(), e);
         }
-        CHANNEL.sendToServer(new SubmitActionsJsonPacket(json));
     }
 
     private static void handleSaveWorldJson(SaveWorldJsonPacket message, Supplier<NetworkEvent.Context> context) {
-        DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientFileDialogs.saveWorldJson(message.json()));
+        DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+            try {
+                String json = JsonGzip.decompress(message.compressedJson(), MAX_JSON_BYTES);
+                ClientFileDialogs.saveWorldJson(json);
+            } catch (Exception e) {
+                ClientFileDialogs.clientMessage(
+                        "Artificial Architect: world.json のgzip展開に失敗しました: " + e.getMessage()
+                );
+                e.printStackTrace();
+            }
+        });
     }
 
     private static void handleOpenActionsDialog(OpenActionsDialogPacket message, Supplier<NetworkEvent.Context> context) {
@@ -91,7 +110,8 @@ public final class ArtificialArchitectNetwork {
         }
 
         try {
-            ActionExecutor.ApplyResult result = ActionExecutor.apply(sender.serverLevel(), message.json());
+            String json = JsonGzip.decompress(message.compressedJson(), MAX_JSON_BYTES);
+            ActionExecutor.ApplyResult result = ActionExecutor.apply(sender.serverLevel(), json);
             sender.sendSystemMessage(Component.literal(
                     "Artificial Architect: apply 完了 | actions=" + result.actionCount()
                             + " | requested=" + result.requestedPlacements()
@@ -105,13 +125,13 @@ public final class ArtificialArchitectNetwork {
         }
     }
 
-    public record SaveWorldJsonPacket(String json) {
+    public record SaveWorldJsonPacket(byte[] compressedJson) {
         private static void encode(SaveWorldJsonPacket message, FriendlyByteBuf buffer) {
-            buffer.writeUtf(message.json, MAX_JSON_CHARS);
+            buffer.writeByteArray(message.compressedJson);
         }
 
         private static SaveWorldJsonPacket decode(FriendlyByteBuf buffer) {
-            return new SaveWorldJsonPacket(buffer.readUtf(MAX_JSON_CHARS));
+            return new SaveWorldJsonPacket(buffer.readByteArray(MAX_COMPRESSED_BYTES));
         }
     }
 
@@ -124,13 +144,13 @@ public final class ArtificialArchitectNetwork {
         }
     }
 
-    public record SubmitActionsJsonPacket(String json) {
+    public record SubmitActionsJsonPacket(byte[] compressedJson) {
         private static void encode(SubmitActionsJsonPacket message, FriendlyByteBuf buffer) {
-            buffer.writeUtf(message.json, MAX_JSON_CHARS);
+            buffer.writeByteArray(message.compressedJson);
         }
 
         private static SubmitActionsJsonPacket decode(FriendlyByteBuf buffer) {
-            return new SubmitActionsJsonPacket(buffer.readUtf(MAX_JSON_CHARS));
+            return new SubmitActionsJsonPacket(buffer.readByteArray(MAX_COMPRESSED_BYTES));
         }
     }
 }

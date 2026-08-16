@@ -47,20 +47,15 @@ public final class ClientFileDialogs {
                 }
 
                 long size = Files.size(selected);
-                if (size > ArtificialArchitectNetwork.MAX_JSON_CHARS * 4L) {
+                if (size > ArtificialArchitectNetwork.MAX_JSON_BYTES) {
                     clientMessage(
-                            "Artificial Architect: actions.json が転送上限を超えています: "
+                            "Artificial Architect: actions.json の展開サイズ上限を超えています: "
                                     + size + " bytes"
                     );
                     return;
                 }
 
                 String json = Files.readString(selected, StandardCharsets.UTF_8);
-                if (!ArtificialArchitectNetwork.canTransfer(json)) {
-                    clientMessage("Artificial Architect: actions.json が転送上限を超えています。");
-                    return;
-                }
-
                 ArtificialArchitectNetwork.submitActionsToServer(json);
                 clientMessage("Artificial Architect: actions.json を読み込みました: " + selected.getFileName());
             } catch (Exception e) {
@@ -180,7 +175,7 @@ public final class ClientFileDialogs {
         return throwable.getClass().getSimpleName() + ": " + message;
     }
 
-    private static void clientMessage(String text) {
+    static void clientMessage(String text) {
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> {
             if (minecraft.player != null) {
