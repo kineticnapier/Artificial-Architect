@@ -9,8 +9,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.RegisterCommandsEvent;
 
-import java.io.IOException;
-
 public final class ArtificialArchitectCommands {
     private ArtificialArchitectCommands() {}
 
@@ -38,9 +36,19 @@ public final class ArtificialArchitectCommands {
         try {
             ServerPlayer player = source.getPlayerOrException();
             WorldExporter.ExportResult result = WorldExporter.export(player, radius);
+
+            if (!ArtificialArchitectNetwork.canTransfer(result.json())) {
+                source.sendFailure(Component.literal(
+                        "Artificial Architect: world.json がファイルダイアログ転送上限を超えました。"
+                                + " radius を小さくしてください。内部コピー: " + result.path()
+                ));
+                return 0;
+            }
+
+            ArtificialArchitectNetwork.openSaveDialog(player, result.json());
             source.sendSuccess(
                     () -> Component.literal(
-                            "Artificial Architect: world.json を出力しました: " + result.path()
+                            "Artificial Architect: world.json の保存ダイアログを開きました"
                                     + " | side=" + result.sideLength()
                                     + " | nonAir=" + result.nonAirBlocks()
                                     + " | snapshotId=" + result.snapshotId()
@@ -59,19 +67,13 @@ public final class ArtificialArchitectCommands {
         CommandSourceStack source = context.getSource();
 
         try {
-            ActionExecutor.ApplyResult result = ActionExecutor.apply(source.getLevel());
+            ServerPlayer player = source.getPlayerOrException();
+            ArtificialArchitectNetwork.openActionsDialog(player);
             source.sendSuccess(
-                    () -> Component.literal(
-                            "Artificial Architect: apply 完了 | actions=" + result.actionCount()
-                                    + " | requested=" + result.requestedPlacements()
-                                    + " | changed=" + result.changedBlocks()
-                    ),
-                    true
+                    () -> Component.literal("Artificial Architect: actions.json のファイルダイアログを開きました。"),
+                    false
             );
             return 1;
-        } catch (IOException | ActionExecutor.ValidationException e) {
-            source.sendFailure(Component.literal("Artificial Architect apply rejected: " + e.getMessage()));
-            return 0;
         } catch (Exception e) {
             source.sendFailure(Component.literal("Artificial Architect apply failed: " + e.getMessage()));
             e.printStackTrace();

@@ -1,6 +1,5 @@
 package dev.kineticnapier.artificialarchitect;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -25,20 +24,42 @@ public final class ActionExecutor {
 
     private ActionExecutor() {}
 
+    /**
+     * Debug/compatibility path: apply the cached artificialarchitect/actions.json file.
+     */
     public static ApplyResult apply(ServerLevel level) throws IOException, ValidationException {
-        Path worldPath = ArtificialArchitectPaths.worldJson();
         Path actionsPath = ArtificialArchitectPaths.actionsJson();
-
-        if (!Files.isRegularFile(worldPath)) {
-            throw new ValidationException("world.json がありません。先に /architect dump <radius> を実行してください。");
-        }
         if (!Files.isRegularFile(actionsPath)) {
             throw new ValidationException("actions.json がありません: " + actionsPath);
         }
 
-        JsonObject world = readObject(worldPath);
+        JsonObject world = readCachedWorld();
         JsonObject actionsRoot = readObject(actionsPath);
+        return applyParsed(level, world, actionsRoot);
+    }
 
+    /**
+     * Normal UI path: apply JSON selected on the client and transferred to the server.
+     */
+    public static ApplyResult apply(ServerLevel level, String actionsJson) throws IOException, ValidationException {
+        JsonObject world = readCachedWorld();
+        JsonObject actionsRoot = readObject(actionsJson, "actions.json");
+        return applyParsed(level, world, actionsRoot);
+    }
+
+    private static JsonObject readCachedWorld() throws IOException, ValidationException {
+        Path worldPath = ArtificialArchitectPaths.worldJson();
+        if (!Files.isRegularFile(worldPath)) {
+            throw new ValidationException("world.json がありません。先に /architect dump <radius> を実行してください。");
+        }
+        return readObject(worldPath);
+    }
+
+    private static ApplyResult applyParsed(
+            ServerLevel level,
+            JsonObject world,
+            JsonObject actionsRoot
+    ) throws ValidationException {
         requireInt(world, "schema", 1, "world.json");
         requireInt(actionsRoot, "schema", 1, "actions.json");
 
@@ -143,6 +164,18 @@ public final class ActionExecutor {
             return element.getAsJsonObject();
         } catch (RuntimeException e) {
             throw new ValidationException(path.getFileName() + " のJSONを解析できません: " + e.getMessage());
+        }
+    }
+
+    private static JsonObject readObject(String json, String name) throws ValidationException {
+        try {
+            JsonElement element = JsonParser.parseString(json);
+            if (!element.isJsonObject()) {
+                throw new ValidationException(name + " のルートは object である必要があります。");
+            }
+            return element.getAsJsonObject();
+        } catch (RuntimeException e) {
+            throw new ValidationException(name + " のJSONを解析できません: " + e.getMessage());
         }
     }
 
