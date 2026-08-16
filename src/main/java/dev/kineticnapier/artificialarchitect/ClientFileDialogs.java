@@ -47,7 +47,7 @@ public final class ClientFileDialogs {
                 }
 
                 long size = Files.size(selected);
-                if (size > ArtificialArchitectNetwork.MAX_JSON_BYTES) {
+                if (size > ArtificialArchitectNetwork.MAX_ACTIONS_JSON_BYTES) {
                     clientMessage(
                             "Artificial Architect: actions.json の展開サイズ上限を超えています: "
                                     + size + " bytes"
