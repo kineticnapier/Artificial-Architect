@@ -12,7 +12,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -71,12 +70,11 @@ public final class WorldExporter {
 
         root.add("blocks", blocks);
 
+        String json = GSON.toJson(root);
         Path output = ArtificialArchitectPaths.worldJson();
-        try (Writer writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8)) {
-            GSON.toJson(root, writer);
-        }
+        Files.writeString(output, json, StandardCharsets.UTF_8);
 
-        return new ExportResult(output, snapshotId, nonAirCount, (radius * 2 + 1));
+        return new ExportResult(output, snapshotId, nonAirCount, (radius * 2 + 1), json);
     }
 
     private static JsonArray vec(int x, int y, int z) {
@@ -87,5 +85,11 @@ public final class WorldExporter {
         return array;
     }
 
-    public record ExportResult(Path path, String snapshotId, int nonAirBlocks, int sideLength) {}
+    public record ExportResult(
+            Path path,
+            String snapshotId,
+            int nonAirBlocks,
+            int sideLength,
+            String json
+    ) {}
 }
