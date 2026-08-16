@@ -26,9 +26,6 @@ public final class ActionExecutor {
 
     private ActionExecutor() {}
 
-    /**
-     * Debug/compatibility path: apply the cached artificialarchitect/actions.json file.
-     */
     public static ApplyResult apply(ServerLevel level) throws IOException, ValidationException {
         Path actionsPath = ArtificialArchitectPaths.actionsJson();
         if (!Files.isRegularFile(actionsPath)) {
@@ -40,9 +37,6 @@ public final class ActionExecutor {
         return applyParsed(level, world, actionsRoot);
     }
 
-    /**
-     * Normal UI path: apply JSON selected on the client and transferred to the server.
-     */
     public static ApplyResult apply(ServerLevel level, String actionsJson) throws IOException, ValidationException {
         JsonObject world = readCachedWorld();
         JsonObject actionsRoot = readObject(actionsJson, "actions.json");
@@ -62,7 +56,7 @@ public final class ActionExecutor {
             JsonObject world,
             JsonObject actionsRoot
     ) throws ValidationException {
-        requireInt(world, "schema", 1, "world.json");
+        requireSupportedWorldSchema(world);
         requireInt(actionsRoot, "schema", 1, "actions.json");
 
         String worldSnapshot = requireString(world, "snapshotId", "world.json");
@@ -85,7 +79,6 @@ public final class ActionExecutor {
         JsonArray actions = requireArray(actionsRoot, "actions", "actions.json");
         List<Placement> placements = new ArrayList<>();
 
-        // 先に全アクションを検証し、問題がなければ初めてワールドを変更する。
         for (int i = 0; i < actions.size(); i++) {
             JsonElement element = actions.get(i);
             if (!element.isJsonObject()) {
@@ -282,6 +275,21 @@ public final class ActionExecutor {
             throw new ValidationException(where + "." + key + " は string である必要があります。");
         }
         return value.getAsString();
+    }
+
+    private static void requireSupportedWorldSchema(JsonObject world) throws ValidationException {
+        JsonElement value = world.get("schema");
+        if (value == null || !value.isJsonPrimitive()) {
+            throw new ValidationException("world.json.schema がありません。");
+        }
+        try {
+            int actual = value.getAsInt();
+            if (actual != 1 && actual != 2) {
+                throw new ValidationException("world.json.schema=" + actual + " は未対応です。期待値=1 or 2");
+            }
+        } catch (NumberFormatException | UnsupportedOperationException e) {
+            throw new ValidationException("world.json.schema は整数である必要があります。");
+        }
     }
 
     private static void requireInt(JsonObject object, String key, int expected, String where) throws ValidationException {
