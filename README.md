@@ -31,7 +31,7 @@ PowerShell:
 生成物:
 
 ```text
-build/libs/artificialarchitect-0.2.0.jar
+build/libs/artificialarchitect-0.2.1.jar
 ```
 
 ## Usage
@@ -44,7 +44,7 @@ build/libs/artificialarchitect-0.2.0.jar
 /architect dump 8
 ```
 
-クライアント側でネイティブの保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
+クライアント側で Windows 標準の保存ダイアログが開くので、`world.json` を好きな場所に保存します。初期ディレクトリは通常 `Downloads` です。
 
 サーバー側にも最新 snapshot の内部コピーが `.minecraft/artificialarchitect/world.json` として保存されます。これは `actions.json` の `snapshotId`、origin、bounds、dimension の検証に使われます。
 
@@ -58,7 +58,7 @@ build/libs/artificialarchitect-0.2.0.jar
 /architect apply
 ```
 
-クライアント側でファイル選択ダイアログが開くので、AI が生成した `actions.json` を選択します。
+クライアント側で Windows 標準のファイル選択ダイアログが開くので、AI が生成した `actions.json` を選択します。
 
 選択した JSON 本文がサーバーへ送られ、既存の検証をすべて通過した場合のみワールドへ反映されます。Prism Launcher の instance フォルダへ手作業でファイルをコピーする必要はありません。
 
@@ -66,7 +66,7 @@ build/libs/artificialarchitect-0.2.0.jar
 
 ## File-dialog bridge
 
-Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。
+Forge の SimpleChannel を使って、ファイルダイアログとワールド操作をクライアント/サーバー間で分離しています。Minecraft/Prism の JVM は AWT headless になる場合があるため、v0.2.1 では AWT `FileDialog` を使わず、Windows PowerShell の `System.Windows.Forms.SaveFileDialog` / `OpenFileDialog` を呼び出します。
 
 ```text
 /architect dump <radius>
@@ -74,7 +74,7 @@ server: world snapshot 作成
         ↓
 S2C: world.json 本文
         ↓
-client: 保存ダイアログ
+client: Windows 保存ダイアログ
 
 /architect apply
 server: 読み込み要求
@@ -145,6 +145,7 @@ JSON のネットワーク転送には現在 900,000 文字の上限がありま
 
 ## Current limitations
 
+- file dialog は現在 Windows のみ対応
 - block state 未対応
 - block entity / inventory / entity は dump しない
 - undo 未実装
