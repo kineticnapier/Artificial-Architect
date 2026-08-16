@@ -1,0 +1,13 @@
+.gradle/
+.gradle-bootstrap/
+build/
+run/
+run-data/
+out/
+bin/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+mcmodsrepo/

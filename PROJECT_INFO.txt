@@ -1,0 +1,7 @@
+Project: Artificial Architect
+Minecraft: 1.20.1
+Forge: 47.4.22
+Java: 17
+Gradle bootstrap: 8.8
+Mod ID: artificialarchitect
+Version: 0.1.0
