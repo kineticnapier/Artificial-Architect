@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "snapshotId": "COPY_FROM_world.json",
+  "actions": [
+    {
+      "type": "fill",
+      "from": [-1, 0, -1],
+      "to": [1, 0, 1],
+      "block": "minecraft:stone_bricks"
+    },
+    {
+      "type": "set",
+      "p": [0, 1, 0],
+      "block": "minecraft:lantern"
+    }
+  ]
+}
